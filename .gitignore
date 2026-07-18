@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db
+.env
+*.env
+.venv/
+venv/
+.env.local
+data/trading.db
+.idea/
+.vscode/
+*.swp
+*.swo
