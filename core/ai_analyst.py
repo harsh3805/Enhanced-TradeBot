@@ -32,8 +32,31 @@ class AIAnalyst:
         self.indicators = None
         self.analysis = {}
 
-    def analyze(self):
-        """Run full analysis: ALL strategies, market context, volatility, trend."""
+    def analyze(self, use_v2=True):
+        """Run full analysis: ALL strategies, market context, volatility, trend.
+        If use_v2=True, uses the enhanced ML-first AIAnalystV2.
+        """
+        if use_v2:
+            try:
+                from core.ai_analyst_v2 import AIAnalystV2
+                v2 = AIAnalystV2(self.symbol, self.market)
+                result = v2.analyze()
+                d = result.__dict__
+                # Compatibility: map v2 field names to v1 names expected by dashboard
+                d["decision"] = d.get("action", "HOLD")
+                d["price"] = d.get("entry_price", 0)
+                d["target"] = d.get("target_price", 0)
+                d["stop_loss"] = d.get("stop_loss", 0)
+                d["volume_ok"] = d.get("volume_confirmed", True)
+                d["mtf_aligned"] = d.get("mtf_aligned", True)
+                d["near_earnings"] = d.get("near_earnings", False)
+                d["strategy_votes"] = d.get("strategy_counts", {"BUY": 0, "SELL": 0, "HOLD": 0})
+                d["total_strategies"] = sum(d.get("strategy_counts", {"BUY": 0, "SELL": 0, "HOLD": 0}).values())
+                d["regime"] = {"regime": d.get("market_regime", "UNKNOWN")}
+                d["market_context"] = {"trend": d.get("market_regime", "UNKNOWN"), "fii_signal": d.get("fii_dii_signal", "NEUTRAL"), "fii_reason": ""}
+                return d
+            except Exception as e:
+                pass  # fall back to v1
         self.df = get_stock_data(self.full_symbol, period="1y")
         if self.df.empty or len(self.df) < 30:
             return {"error": f"Insufficient data for {self.full_symbol}"}

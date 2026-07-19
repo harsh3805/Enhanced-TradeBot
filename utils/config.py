@@ -40,4 +40,29 @@ POPULAR_INDIAN = [
     "ASIANPAINT.NS", "HCLTECH.NS", "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS",
 ]
 
+# ── ML Configuration ──────────────────────────────────────────
+ML_MODEL_DIR = "data/models/"
+ML_FORWARD_HORIZON = 5            # Days ahead for target classification
+ML_MIN_TRAIN_DAYS = 252           # Minimum training data (1 year)
+ML_TEST_DAYS = 63                 # Walk-forward test window (1 quarter)
+ML_RETRAIN_DAYS = 30              # Auto-retrain after this many days
+
+# ── Cost Model Defaults ──────────────────────────────────────
+DEFAULT_BROKERAGE_PCT = 0.03
+DEFAULT_DELIVERY_SELL_STT = 0.1
+DEFAULT_INTRADAY_STT = 0.025
+
+# ── Adaptive Parameters ──────────────────────────────────────
+ADAPTIVE_ENABLED = True
+
+# ── Smart Signal Combiner ────────────────────────────────────
+SIGNAL_COOLDOWN_DAYS = 3
+ML_SIGNAL_WEIGHT = 0.3
+PERFORMANCE_LOOKBACK = 50
+
+# ── Enhanced Backtester ──────────────────────────────────────
+WALK_FORWARD_TRAIN_DAYS = 504
+WALK_FORWARD_TEST_DAYS = 63
+MONTE_CARLO_SIMULATIONS = 1000
+
 # Risk management defaults

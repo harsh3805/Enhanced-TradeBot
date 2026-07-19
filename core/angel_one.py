@@ -11,6 +11,7 @@ Setup:
 import streamlit as st
 import pandas as pd
 import os
+import re
 import json
 from datetime import datetime, timedelta
 
@@ -20,14 +21,39 @@ ANGEL_API_KEY = os.environ.get("ANGEL_API_KEY", "")
 ANGEL_PASSWORD = os.environ.get("ANGEL_PASSWORD", "")
 ANGEL_TOTP = os.environ.get("ANGEL_TOTP", "")
 
+
+def generate_totp(secret):
+    """
+    Generate a 6-digit TOTP code from a base32 secret seed.
+    If the input is already a 6-digit numeric string, return it as-is
+    for backward compatibility.
+    """
+    if not secret:
+        return "000000"
+    # Backward compatibility: if it's already a 6-digit code, use it directly
+    if re.fullmatch(r'\d{6}', secret.strip()):
+        return secret.strip()
+    # Otherwise, treat it as a base32 TOTP seed
+    try:
+        import pyotp
+        totp = pyotp.TOTP(secret.strip())
+        return totp.now()
+    except Exception:
+        return "000000"
+
+
 # Session state
 _session = None
 _session_token = None
+_refresh_token = None
+_feed_token = None
+_login_attempted = False
+_last_login_result = None
 
 
 def is_configured():
     """Check if API credentials are set."""
-    return bool(ANGEL_CLIENT_ID and ANGEL_API_KEY and ANGEL_PASSWORD)
+    return bool(ANGEL_CLIENT_ID and ANGEL_API_KEY and ANGEL_PASSWORD and ANGEL_TOTP)
 
 
 def is_authenticated():
@@ -36,32 +62,47 @@ def is_authenticated():
 
 
 def login():
-    """Login to Angel One SmartAPI."""
-    global _session, _session_token
+    """Login to Angel One SmartAPI with auto-generated TOTP."""
+    global _session, _session_token, _refresh_token, _feed_token, _last_login_result
+
     if not is_configured():
-        return {"error": "API credentials not configured"}
+        _last_login_result = {"error": "API credentials not configured"}
+        return _last_login_result
 
     try:
-        from smartapi import SmartConnect
+        from SmartApi import SmartConnect
+
+        # Auto-generate TOTP code from seed
+        totp_code = generate_totp(ANGEL_TOTP)
+
         session = SmartConnect(api_key=ANGEL_API_KEY)
         data = session.generateSession(
             clientCode=ANGEL_CLIENT_ID,
             password=ANGEL_PASSWORD,
-            totp=ANGEL_TOTP or "000000",
+            totp=totp_code,
         )
         if data.get("status"):
             _session = session
             _session_token = data.get("data", {}).get("jwtToken")
-            return {"success": True, "message": "Logged in to Angel One"}
+            _refresh_token = data.get("data", {}).get("refreshToken")
+            _feed_token = data.get("data", {}).get("feedToken")
+
+            # Register session expiry hook for auto-refresh
+            session.setSessionExpiryHook(_on_session_expired)
+
+            _last_login_result = {"success": True, "message": "Logged in to Angel One"}
+            return _last_login_result
         else:
-            return {"error": data.get("message", "Login failed")}
+            _last_login_result = {"error": data.get("message", "Login failed")}
+            return _last_login_result
     except Exception as e:
-        return {"error": str(e)}
+        _last_login_result = {"error": str(e)}
+        return _last_login_result
 
 
 def logout():
     """Logout from Angel One."""
-    global _session, _session_token
+    global _session, _session_token, _refresh_token, _feed_token, _login_attempted
     if _session:
         try:
             _session.terminateSession(ANGEL_CLIENT_ID)
@@ -69,16 +110,88 @@ def logout():
             pass
     _session = None
     _session_token = None
+    _refresh_token = None
+    _feed_token = None
+    _login_attempted = False
 
 
 def get_session():
-    """Get active session or auto-login."""
-    global _session
-    if not is_authenticated():
+    """Get active session, attempting auto-login if needed."""
+    global _session, _login_attempted
+
+    if is_authenticated():
+        return _session
+
+    if not _login_attempted and is_configured():
+        _login_attempted = True
         result = login()
         if "error" in result:
             return None
-    return _session
+        return _session
+
+    return None
+
+
+# ── Session Management ───────────────────────────────────────
+
+def _on_session_expired():
+    """Callback for when SmartConnect detects an expired session."""
+    global _session, _session_token, _refresh_token, _feed_token, _last_login_result
+
+    # Try to refresh the token
+    if _session and _refresh_token:
+        try:
+            result = refresh_session()
+            if result.get("success"):
+                return
+        except Exception:
+            pass
+
+    # If refresh failed, attempt full re-login
+    _session = None
+    _session_token = None
+    login()
+
+
+def refresh_session():
+    """Refresh the session using the stored refresh token."""
+    global _session, _session_token, _refresh_token, _feed_token
+
+    if not _session or not _refresh_token:
+        return {"error": "No session to refresh"}
+
+    try:
+        response = _session.generateToken(_refresh_token)
+        if response and response.get("status"):
+            _session_token = response["data"]["jwtToken"]
+            _refresh_token = response["data"]["refreshToken"]
+            _feed_token = response["data"]["feedToken"]
+            return {"success": True, "message": "Session refreshed"}
+        return {"error": "Refresh failed"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def get_login_status():
+    """Return human-readable login status for UI display."""
+    if is_authenticated():
+        return {"status": "connected", "message": "Connected to Angel One SmartAPI"}
+    # Try auto-login if configured but not yet attempted
+    if is_configured() and not _login_attempted:
+        get_session()
+        if is_authenticated():
+            return {"status": "connected", "message": "Connected to Angel One SmartAPI"}
+    if _last_login_result and "error" in _last_login_result:
+        return {"status": "error", "message": _last_login_result["error"]}
+    elif not is_configured():
+        return {"status": "not_configured", "message": "Credentials not configured"}
+    else:
+        return {"status": "disconnected", "message": "Not connected"}
+
+
+def get_feed_token():
+    """Get the current feed token for WebSocket connections."""
+    return _feed_token
 
 
 # ── Market Quotes ─────────────────────────────────────────────

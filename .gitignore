@@ -12,3 +12,4 @@ data/trading.db
 .vscode/
 *.swp
 *.swo
+data/models/

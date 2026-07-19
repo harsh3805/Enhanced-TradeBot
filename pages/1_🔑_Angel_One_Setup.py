@@ -12,17 +12,24 @@ st.title("🔑 Angel One SmartAPI — Real Trading Setup")
 from core.angel_one import (
     is_configured, is_authenticated, login, logout, get_session,
     get_market_status, get_ltp, get_positions, get_holdings,
-    get_order_history, get_account, get_quote
+    get_order_history, get_account, get_quote,
+    get_login_status, generate_totp, ANGEL_TOTP
 )
 
 # ── Connection Status ──
-if is_authenticated():
-    st.success("✅ **Connected to Angel One SmartAPI — Live Trading Mode**")
+# Trigger auto-login on first visit
+if is_configured() and not is_authenticated():
+    get_session()
+status = get_login_status()
+if status["status"] == "connected":
+    st.success(f"✅ **{status['message']} — Live Trading Mode**")
     try:
-        status = get_market_status()
-        st.info(f"📊 Market: {status}")
+        market_status = get_market_status()
+        st.info(f"📊 Market: {market_status}")
     except:
         pass
+elif status["status"] == "error":
+    st.error(f"❌ **Connection failed:** {status['message']}")
 else:
     st.warning("🔴 **Not connected to Angel One** — Using paper trading + delayed data")
 
@@ -50,7 +57,8 @@ with tab1:
     ### Step 2: Generate TOTP
 
     - You can use an authenticator app (Google Authenticator, etc.)
-    - Or use a static TOTP seed for automated login
+    - Or use the **base32 TOTP secret seed** for automated login
+    - The app will auto-generate 6-digit codes from your seed at login time
 
     ⚠️ **Keep these safe! Never share API credentials publicly.**
     """)
@@ -66,39 +74,72 @@ with tab2:
     $env:ANGEL_CLIENT_ID = "your_client_id"
     $env:ANGEL_API_KEY = "your_api_key"
     $env:ANGEL_PASSWORD = "your_password"
-    $env:ANGEL_TOTP = "your_totp_seed"
+    $env:ANGEL_TOTP = "your_totp_secret_seed"
 
     # Set permanently:
     [Environment]::SetEnvironmentVariable("ANGEL_CLIENT_ID", "your_client_id", "User")
     [Environment]::SetEnvironmentVariable("ANGEL_API_KEY", "your_api_key", "User")
     [Environment]::SetEnvironmentVariable("ANGEL_PASSWORD", "your_password", "User")
-    [Environment]::SetEnvironmentVariable("ANGEL_TOTP", "your_totp", "User")
+    [Environment]::SetEnvironmentVariable("ANGEL_TOTP", "your_totp_secret_seed", "User")
     ```
+
+    **ANGEL_TOTP** should be your base32 TOTP secret seed (e.g., `IYG27JQI53K277ATA3UVR2NSYM`).
+    The app will auto-generate 6-digit TOTP codes from this seed at login time.
 
     **Then restart the Streamlit app.**
     """)
 
+    st.markdown("---")
+    st.markdown("#### Or set TOTP seed via UI (current session only)")
+    with st.form("totp_seed_form"):
+        totp_seed = st.text_input(
+            "TOTP Secret Seed",
+            type="password",
+            help="Base32 seed from Angel One TOTP setup (e.g., IYG27JQI53K277ATA3UVR2NSYM)",
+            placeholder="Enter your TOTP seed...",
+        )
+        submitted = st.form_submit_button("Save TOTP Seed")
+        if submitted and totp_seed:
+            import core.angel_one as angel_module
+            os.environ["ANGEL_TOTP"] = totp_seed.strip()
+            angel_module.ANGEL_TOTP = totp_seed.strip()
+            st.success("✅ TOTP seed saved for this session!")
+            st.info("For permanent storage, use the PowerShell commands above and restart the app.")
+
 with tab3:
     st.markdown("### 🔐 Login to Angel One")
 
-    if is_configured():
-        if not is_authenticated():
-            if st.button("🔐 Login Now", type="primary"):
-                with st.spinner("Logging in..."):
-                    result = login()
-                    if "success" in result:
-                        st.success(result["message"])
-                        st.rerun()
-                    else:
-                        st.error(f"Login failed: {result.get('error')}")
-                        st.info("💡 Check your credentials in environment variables")
-        else:
-            st.success("✅ Already logged in to Angel One!")
-            if st.button("🔴 Logout"):
-                logout()
-                st.rerun()
+    login_status = get_login_status()
+
+    if login_status["status"] == "connected":
+        st.success(f"✅ {login_status['message']}")
+        st.caption("🔄 Auto-login active. Session will refresh automatically.")
+        if st.button("🔴 Logout", type="secondary"):
+            logout()
+            st.rerun()
+    elif login_status["status"] == "error":
+        st.error(f"❌ Login failed: {login_status['message']}")
+        if st.button("🔄 Retry Login", type="primary"):
+            with st.spinner("Logging in..."):
+                result = login()
+                if "success" in result:
+                    st.success(result["message"])
+                    st.rerun()
+                else:
+                    st.error(f"Login failed: {result.get('error')}")
+    elif login_status["status"] == "not_configured":
+        st.warning("⚠️ Set ANGEL_CLIENT_ID, ANGEL_API_KEY, ANGEL_PASSWORD, and ANGEL_TOTP first (Step 2)")
     else:
-        st.warning("⚠️ Set ANGEL_CLIENT_ID, ANGEL_API_KEY, and ANGEL_PASSWORD first (Step 2)")
+        st.info("Not connected. Click below to login.")
+        if st.button("🔐 Login Now", type="primary"):
+            with st.spinner("Logging in..."):
+                result = login()
+                if "success" in result:
+                    st.success(result["message"])
+                    st.rerun()
+                else:
+                    st.error(f"Login failed: {result.get('error')}")
+                    st.info("💡 Check your credentials in environment variables")
 
     if is_authenticated():
         st.markdown("---")
